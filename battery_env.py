@@ -34,7 +34,7 @@ class BatteryEnv(gym.Env):
                     no -> full charge, full discharge, idle
                     yes -> action is continous in [-1, 1]
                 price_series (array or None) = array of electricity prices (length = episode_length)
-                seed (int or None) = for reproducobility
+                seed (int or None) = for reproducibility
             """
         super().__init__()
 
@@ -89,4 +89,12 @@ class BatteryEnv(gym.Env):
             self.action_space = spaces.Discrete(3) 
 
         # --- Observation space ---
+        # obs = [current battery percent, price of energy, cos(time), sin(time)]
+        self._PRICE_HIGH = np.finfo(np.float32).max
+        self.observation_space = spaces.Box(
+            low=np.array([0.0, 0.0, -1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, self._PRICE_HIGH, 1.0, 1.0], dtype=np.float32),
+            dtype=np.float32,
+        )
+        
 
