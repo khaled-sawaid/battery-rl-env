@@ -11,12 +11,32 @@ class BatteryEnv(gym.Env):
                 min_capacity_kwh=0.0,
                 max_charge_rate_kw=25.0,
                 max_discharge_rate_kw=25.0,
-                initial_soc_frac=0.5, # fraction of max_capacity_kwh
+                initial_soc_frac=0.5, 
                 charge_efficiency=0.95,
                 discharge_efficiency=0.95,
                 continuous_action=True,
                 price_series=None,
                 seed=None,):
+        """
+        Initializes the BatteryEnv.
+
+        Args:
+            episode_length: Number of steps per episode.
+            step_hours: Hours per step.
+            max_capacity_kwh: Max state of charge [kWh].
+            min_capacity_kwh: Min state of charge [kWh].
+            max_charge_rate_kw: Max charging power [kW].
+            max_discharge_rate_kw: Max discharging power [kW].
+            initial_soc_frac: Initial SoC as a fraction of max capacity.
+            charge_efficiency: One-way charging efficiency (0-1].
+            discharge_efficiency: One-way discharging efficiency (0-1].
+            continuous_action: If True, actions are continuous; otherwise discrete.
+            price_series: per-step price [currency/kWh].
+            seed: Optional random seed for reproducibility.
+
+        Notes:
+            - Units: power=kW, energy=kWh, time=hours.
+        """
         super().__init__()
         
         # --- Validate params ---
@@ -62,10 +82,10 @@ class BatteryEnv(gym.Env):
         self.np_random, self.seed = gym.utils.seeding.np_random(seed)
 
         # --- Action space ---
-        if continuous_action:
+        if self.continuous_action:
             self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32)
         else:
-            self.action_space = spaces.Discrete(3, start=-1)
+            self.action_space = spaces.Discrete(3)
 
         # --- Observation space ---
         self._max_price = float(ps.max())
@@ -85,8 +105,8 @@ class BatteryEnv(gym.Env):
 
 
     # --- Helpers ---
-    def _time_features(self):
-        theta = 2.0 * np.pi * (self.current_step / self.episode_length)
+    def _time_features(self, current_step):
+        theta = 2.0 * np.pi * (current_step / self.episode_length)
         return np.cos(theta).astype(np.float32), np.sin(theta).astype(np.float32)
 
 
@@ -101,7 +121,7 @@ class BatteryEnv(gym.Env):
         self.energy_kwh = self.initial_soc_frac * self.max_capacity_kwh
         self.battery_pct = self.energy_kwh / self.max_capacity_kwh
 
-        cos_time, sin_time = self._time_features()
+        cos_time, sin_time = self._time_features(self.current_step)
         obs = np.array([self.battery_pct, self.current_price, cos_time, sin_time], dtype=np.float32)
 
         return obs, {}
@@ -117,10 +137,12 @@ class BatteryEnv(gym.Env):
 
         if self.continuous_action:
             a = float(np.clip(np.asarray(action).item() if isinstance(action, (list, np.ndarray, np.generic)) else action, -1.0, 1.0))
-            power_kw = a * (self.charge_max if a >= 0.0 else self.discharge_max)
+            power_kw = a * (self.max_charge_rate_kw if a >= 0.0 else self.max_discharge_rate_kw)
         else:
             a = int(action)
-            power_kw = {-1: -self.max_discharge_rate_kw, 0: 0.0, 1: self.max_charge_rate_kw}[a]
+            if a not in (0, 1, 2):
+                raise ValueError("Discrete action must be one of {0,1,2}.")
+            power_kw = {0: -self.max_discharge_rate_kw, 1: 0.0, 2: self.max_charge_rate_kw}[a]  
         
 
         if power_kw >= 0:
@@ -154,10 +176,17 @@ class BatteryEnv(gym.Env):
 
         if not terminated:
             self.current_price = float(self.price_series[self.current_step])
-            cos_time, sin_time = self._time_features()
+            cos_time, sin_time = self._time_features(self.current_step)
             obs = np.array([self.battery_pct, self.current_price, cos_time, sin_time], dtype=np.float32)
         else:
-            cos_time, sin_time = self._time_features()
+            cos_time, sin_time = self._time_features(t)
             obs = np.array([self.battery_pct, price, cos_time, sin_time], dtype=np.float32)
         
-        return obs, reward, terminated, truncated, {}
+        info = {
+            "cumulative_profit": float(self.cumulative_profit),
+            "price": float(price),
+            "soc_kwh": float(self.energy_kwh),
+            "battery_pct": float(self.battery_pct),
+        }
+        
+        return obs, reward, terminated, truncated, info
