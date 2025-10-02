@@ -27,7 +27,7 @@ class BatteryEnv(gym.Env):
             min_capacity_kwh: Min state of charge [kWh].
             max_charge_rate_kw: Max charging power [kW].
             max_discharge_rate_kw: Max discharging power [kW].
-            initial_soc_frac: Initial SoC as a fraction of max capacity.
+            initial_soc_frac: Initial state of charge as a fraction of max capacity.
             charge_efficiency: One-way charging efficiency (0-1].
             discharge_efficiency: One-way discharging efficiency (0-1].
             continuous_action: If True, actions are continuous; otherwise discrete.
@@ -60,8 +60,13 @@ class BatteryEnv(gym.Env):
         if price_series is None:
             raise ValueError("price_series must be provided: a 1-D list of length bigger or equal to episode_length")
         ps = np.asarray(price_series, dtype=np.float32)
-        if np.any(ps < 0):
-            raise ValueError("price_series must contain only non-negative values")
+        if ps.ndim != 1:
+            raise ValueError("price_series must be 1-D")
+        if ps.size < episode_length:
+            raise ValueError("len(price_series) must be >= episode_length")
+        if np.isnan(ps).any():
+            raise ValueError("price_series contains NaNs; clean or fill before use")
+
         
         # --- Store params ---
         self.episode_length         = episode_length
@@ -89,7 +94,7 @@ class BatteryEnv(gym.Env):
         # --- Observation space ---
         self._max_price = float(ps.max())
         self._min_price = float(ps.min())
-        # obs = [battery pct, price of energy]
+        # obs = [battery %, price of energy]
         self.observation_space = spaces.Box(
             low=np.array([0.0, self._min_price], dtype=np.float32),
             high=np.array([1.0, self._max_price], dtype=np.float32),
@@ -98,18 +103,15 @@ class BatteryEnv(gym.Env):
 
         # --- Episode state ---
         self.current_step = None
+        self._index = None # index of current step in price_series
+        self._start = None # starting index for the epsiode in price_series 
         self.current_price = None
         self.battery_pct = None
         self.cumulative_profit = None 
-        self._index = None
-        self._start = None
-
-
 
     def reset(self, *, seed=None, options=None):
         if seed is not None:
             self.np_random, self.seed = gym.utils.seeding.np_random(seed)
-
 
         if options is not None and "start" in options:
             start = int(options["start"])
@@ -120,30 +122,26 @@ class BatteryEnv(gym.Env):
             self._start = int(self.np_random.integers(0, self.series_len - self.episode_length + 1))
         
         self._index = self._start
-
         self.current_step = 0
         self.current_price = float(self.price_series[self._index])
         self.cumulative_profit = 0.0
 
-
-        self.energy_kwh = self.initial_soc_frac * self.max_capacity_kwh
+        self.energy_kwh = max(self.min_capacity_kwh, self.initial_soc_frac * self.max_capacity_kwh)
         self.battery_pct = self.energy_kwh / self.max_capacity_kwh
 
         obs = np.array([self.battery_pct, self.current_price], dtype=np.float32)
-    
-        
-        return obs, {}
+        info = {"start_index": int(self._start), "abs_index": int(self._index), "battery_pct": float(self.battery_pct)}
+        return obs, info
 
 
     def step(self, action):
         price = self.current_price
-        t = self.current_step
         dt = self.step_hours
-
         revenue = 0.0
         cost = 0.0
 
         if self.continuous_action:
+            # extracting action (accepts scalar, python list, numpy array and returns a python float clipped in [-1, 1])
             a = float(np.clip(np.asarray(action).item() if isinstance(action, (list, np.ndarray, np.generic)) else action, -1.0, 1.0))
             power_kw = a * (self.max_charge_rate_kw if a >= 0.0 else self.max_discharge_rate_kw)
         else:
@@ -155,11 +153,11 @@ class BatteryEnv(gym.Env):
 
         if power_kw >= 0:
             # CHARGING
-            requested_energy_kwh = power_kw * dt
-            stored_kwh = requested_energy_kwh * self.charge_efficiency
-            room_kwh = self.max_capacity_kwh - self.energy_kwh
-            if room_kwh < stored_kwh:
-                stored_kwh = room_kwh
+            requested_energy_kwh = power_kw * dt                        # what we want to charge
+            stored_kwh = requested_energy_kwh * self.charge_efficiency  # how much we actually store
+            room_kwh = self.max_capacity_kwh - self.energy_kwh          # how much space left in battery
+            if room_kwh < stored_kwh:                       
+                stored_kwh = room_kwh                       
                 requested_energy_kwh = stored_kwh / self.charge_efficiency
             self.energy_kwh += stored_kwh
             cost = requested_energy_kwh * price
@@ -184,7 +182,7 @@ class BatteryEnv(gym.Env):
 
         if not terminated:
             self._index += 1
-            self.current_price = float(self.price_series[self   ._index])
+            self.current_price = float(self.price_series[self._index])
             obs = np.array([self.battery_pct, self.current_price], dtype=np.float32)
         else:
 
@@ -200,3 +198,6 @@ class BatteryEnv(gym.Env):
         }
         
         return obs, reward, terminated, truncated, info
+    
+    def render(self):
+        pass
