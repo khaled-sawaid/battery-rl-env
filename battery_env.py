@@ -58,10 +58,8 @@ class BatteryEnv(gym.Env):
             raise ValueError("discharge_efficiency must be in the range (0,1]")
 
         if price_series is None:
-            raise ValueError("price_series must be provided: a 1-D list of length equal to episode_length")
+            raise ValueError("price_series must be provided: a 1-D list of length bigger or equal to episode_length")
         ps = np.asarray(price_series, dtype=np.float32)
-        if ps.shape != (episode_length, ):
-            raise ValueError("price_series shape must be (episode_length, )")
         if np.any(ps < 0):
             raise ValueError("price_series must contain only non-negative values")
         
@@ -77,6 +75,7 @@ class BatteryEnv(gym.Env):
         self.discharge_efficiency   = float(discharge_efficiency)           
         self.continuous_action      = bool(continuous_action)     
         self.price_series           = ps
+        self.series_len             = int(ps.size)
 
         # --- RNG --- 
         self.np_random, self.seed = gym.utils.seeding.np_random(seed)
@@ -90,10 +89,10 @@ class BatteryEnv(gym.Env):
         # --- Observation space ---
         self._max_price = float(ps.max())
         self._min_price = float(ps.min())
-        # obs = [battery pct, price of energy, cos(time), sin(time)]
+        # obs = [battery pct, price of energy]
         self.observation_space = spaces.Box(
-            low=np.array([0.0, self._min_price, -1.0, -1.0], dtype=np.float32),
-            high=np.array([1.0, self._max_price, 1.0, 1.0], dtype=np.float32),
+            low=np.array([0.0, self._min_price], dtype=np.float32),
+            high=np.array([1.0, self._max_price], dtype=np.float32),
             dtype=np.float32
         )
 
@@ -102,28 +101,37 @@ class BatteryEnv(gym.Env):
         self.current_price = None
         self.battery_pct = None
         self.cumulative_profit = None 
+        self._index = None
+        self._start = None
 
-
-    # --- Helpers ---
-    def _time_features(self, current_step):
-        theta = 2.0 * np.pi * (current_step / self.episode_length)
-        return np.cos(theta).astype(np.float32), np.sin(theta).astype(np.float32)
 
 
     def reset(self, *, seed=None, options=None):
         if seed is not None:
             self.np_random, self.seed = gym.utils.seeding.np_random(seed)
 
+
+        if options is not None and "start" in options:
+            start = int(options["start"])
+            if start < 0 or start + self.episode_length > self.series_len:
+                raise ValueError("Invalid options['start'] for this episode_length.")
+            self._start = start
+        else:
+            self._start = int(self.np_random.integers(0, self.series_len - self.episode_length + 1))
+        
+        self._index = self._start
+
         self.current_step = 0
-        self.current_price = float(self.price_series[self.current_step])
+        self.current_price = float(self.price_series[self._index])
         self.cumulative_profit = 0.0
+
 
         self.energy_kwh = self.initial_soc_frac * self.max_capacity_kwh
         self.battery_pct = self.energy_kwh / self.max_capacity_kwh
 
-        cos_time, sin_time = self._time_features(self.current_step)
-        obs = np.array([self.battery_pct, self.current_price, cos_time, sin_time], dtype=np.float32)
-
+        obs = np.array([self.battery_pct, self.current_price], dtype=np.float32)
+    
+        
         return obs, {}
 
 
@@ -156,7 +164,7 @@ class BatteryEnv(gym.Env):
             self.energy_kwh += stored_kwh
             cost = requested_energy_kwh * price
         else:
-            # DISCHARCHING
+            # DISCHARGING
             discharge_kw = -power_kw
             requested_batt_out_kwh = discharge_kw * dt
             avail_energy_kwh = max(0.0, self.energy_kwh - self.min_capacity_kwh)
@@ -175,18 +183,20 @@ class BatteryEnv(gym.Env):
         truncated = False
 
         if not terminated:
-            self.current_price = float(self.price_series[self.current_step])
-            cos_time, sin_time = self._time_features(self.current_step)
-            obs = np.array([self.battery_pct, self.current_price, cos_time, sin_time], dtype=np.float32)
+            self._index += 1
+            self.current_price = float(self.price_series[self   ._index])
+            obs = np.array([self.battery_pct, self.current_price], dtype=np.float32)
         else:
-            cos_time, sin_time = self._time_features(t)
-            obs = np.array([self.battery_pct, price, cos_time, sin_time], dtype=np.float32)
+
+            obs = np.array([self.battery_pct, price], dtype=np.float32)
         
         info = {
             "cumulative_profit": float(self.cumulative_profit),
             "price": float(price),
             "soc_kwh": float(self.energy_kwh),
             "battery_pct": float(self.battery_pct),
+            "start_index": int(self._start),
+            "abs_index": int(self._index if not terminated else self._index - 1),
         }
         
         return obs, reward, terminated, truncated, info
