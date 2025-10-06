@@ -92,8 +92,8 @@ class BatteryEnv(gym.Env):
             self.action_space = spaces.Discrete(3)
 
         # --- Observation space ---
-        self._max_price = float(ps.max())
-        self._min_price = float(ps.min())
+        self._max_price = 10000.0
+        self._min_price = -10000.0
         # obs = [battery %, price of energy]
         self.observation_space = spaces.Box(
             low=np.array([0.0, self._min_price], dtype=np.float32),
