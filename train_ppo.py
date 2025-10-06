@@ -6,7 +6,7 @@ from stable_baselines3 import PPO
 
 
 COL = "Day-ahead Price (EUR/MWh)"
-data = pd.read_csv("/datasets/GUI_ENERGY_PRICES_202312312300-202412312300.csv", usecols=[COL])
+data = pd.read_csv("datasets/energy_prices_2024_france.csv", usecols=[COL])
 prices_mwh = pd.to_numeric(data[COL], errors="coerce")
 prices_mwh = prices_mwh.dropna()
 prices_kwh = (prices_mwh / 1000.0).to_numpy(dtype=np.float32)
@@ -15,9 +15,8 @@ SEED = 42
 episode_length = 24
 step_hours = 1.0
 
-env = BatteryEnv(price_series=prices_kwh, seed=SEED, episode_length=episode_length, step_hours=step_hours)
-
-env = Monitor(env)
+base_env = BatteryEnv(price_series=prices_kwh, seed=SEED, episode_length=episode_length, step_hours=step_hours)
+env = Monitor(base_env)
 
 model = PPO(
     policy="MlpPolicy",
