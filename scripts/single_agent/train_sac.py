@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from battery_env import BatteryEnv
+from envs.single_agent import BatteryEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3 import SAC  
 
