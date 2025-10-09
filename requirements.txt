@@ -1,0 +1,5 @@
+numpy
+pandas
+gymnasium
+pettingzoo
+stable_baselines3
