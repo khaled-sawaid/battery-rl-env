@@ -1,88 +1,127 @@
+import os
 import pandas as pd
 import numpy as np
+import gymnasium as gym
 from envs.single_agent import BatteryEnv
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, TD3, SAC
 
-
+# ------------- Data -------------
 COL = "Day-ahead Price (EUR/MWh)"
 data = pd.read_csv("datasets/energy_prices_2023_france.csv", usecols=[COL])
-prices_mwh = pd.to_numeric(data[COL], errors="coerce")
-prices_mwh = prices_mwh.dropna()
+prices_mwh = pd.to_numeric(data[COL], errors="coerce").dropna()
 prices_kwh = (prices_mwh / 1000.0).to_numpy(dtype=np.float32)
 
+# ------------- Env -------------
 SEED = 42
 episode_length = 24
-step_hours = 1.
+step_hours = 1.0
 
 base_env = BatteryEnv(price_series=prices_kwh, seed=SEED, episode_length=episode_length, step_hours=step_hours)
 env = Monitor(base_env)
 
-model = PPO.load("ppo_battery_env", env=env)
+# ------------- Load models if available -------------
+models = {}
+paths = {
+    "PPO": "ppo_battery_env",
+    "TD3": "td3_battery_env",
+    "SAC": "sac_battery_env",
+}
+loaders = {"PPO": PPO, "TD3": TD3, "SAC": SAC}
 
-# --- Helpers ---
+for name, path in paths.items():
+    if os.path.exists(path + ".zip"):
+        models[name] = loaders[name].load(path, env=env)
+        print(f"Loaded {name} from {path}.zip")
+    else:
+        print(f"WARNING: {name} checkpoint not found at {path}.zip – skipping.")
+
+# ------------- Policies -------------
+def make_model_policy(model, deterministic=True):
+    def _pol(obs):
+        action, _ = model.predict(obs, deterministic=deterministic)
+        return action
+    return _pol
+
+def make_random_policy(action_space):
+    def _rand(_obs):
+        return action_space.sample()
+    return _rand
+
+policies = {}
+for name, model in models.items():
+    # Deterministic for evaluation (SAC/TD3 mean action; PPO greedy)
+    policies[name] = make_model_policy(model, deterministic=True)
+policies["Random"] = make_random_policy(env.action_space)
+
+# ------------- Eval helpers -------------
 def run_one_episode(env, policy_fn, start_idx=None):
     if start_idx is None:
         obs, info = env.reset(seed=None)
     else:
         obs, info = env.reset(options={"start": int(start_idx)})
-    
-    terminated = False
-    truncated = False
     ep_return = 0.0
+    terminated = truncated = False
     while not (terminated or truncated):
         action = policy_fn(obs)
         obs, reward, terminated, truncated, info = env.step(action)
         ep_return += float(reward)
-    return ep_return, info  
+    return ep_return, info
 
-def ppo_policy(obs):
-    action, _ = model.predict(obs, deterministic=True)
-    return action
+def summarize(name, arr):
+    arr = np.asarray(arr, dtype=np.float32)
+    return f"{name:>8} | mean={arr.mean(): .4f} | median={np.median(arr): .4f} | std={arr.std(ddof=1): .4f} | min={arr.min(): .4f} | max={arr.max(): .4f}"
 
-def random_policy_factory(action_space):
-    def _random(_obs):
-        return action_space.sample()
-    return _random
-
-
-# --- Evalutaion ---
+# ------------- Evaluation set (shared) -------------
 rng = np.random.RandomState(SEED)
 max_start = len(prices_kwh) - episode_length
-valid_starts = rng.choice(np.arange(0, max_start+1), size=200, replace=False)
-
 N_EPISODES = 100
-starts = valid_starts[:N_EPISODES]
+starts_pool = rng.choice(np.arange(0, max_start + 1), size=200, replace=False)
+starts = starts_pool[:N_EPISODES]
 
-ppo_returns = []
-random_returns = []
-random_policy = random_policy_factory(env.action_space)
+# ------------- Run eval -------------
+returns = {name: [] for name in policies.keys()}
 
 for s in starts:
-    r_ppo, info_ppo = run_one_episode(env, ppo_policy, start_idx=s)
-    ppo_returns.append(r_ppo)
+    for name, pol in policies.items():
+        r, _ = run_one_episode(env, pol, start_idx=s)
+        returns[name].append(r)
 
-    r_rnd, info_rnd = run_one_episode(env, random_policy, start_idx=s)
-    random_returns.append(r_rnd)
+# ------------- Print summaries -------------
+print("\n=== Per-policy results ===")
+for name in sorted(returns.keys()):
+    print(summarize(name, returns[name]))
 
-ppo_returns = np.array(ppo_returns, dtype=np.float32)
-random_returns = np.array(random_returns, dtype=np.float32)
+# ------------- Win-rates vs Random -------------
+if "Random" in returns:
+    print("\n=== Win-rate vs Random ===")
+    rnd = np.array(returns["Random"], dtype=np.float32)
+    for name in sorted(returns.keys()):
+        if name == "Random":
+            continue
+        arr = np.array(returns[name], dtype=np.float32)
+        diff = arr - rnd
+        win = (diff > 0).mean()
+        print(f"{name:>8} beats Random in {win*100:.1f}% of episodes (avg margin {diff.mean():.4f}).")
 
-def summary(name, arr):
-    return (
-        f"{name:>8} | mean={arr.mean(): .4f} | median={np.median(arr): .4f} | "
-        f"std={arr.std(ddof=1): .4f} | min={arr.min(): .4f} | max={arr.max(): .4f}"
-    )
+# ------------- Pairwise win-rates among learned agents -------------
+learned = [k for k in returns.keys() if k != "Random"]
+if len(learned) >= 2:
+    print("\n=== Pairwise win-rates (learned agents) ===")
+    for i in range(len(learned)):
+        for j in range(i + 1, len(learned)):
+            a, b = learned[i], learned[j]
+            A = np.array(returns[a], dtype=np.float32)
+            B = np.array(returns[b], dtype=np.float32)
+            win = (A > B).mean()
+            margin = (A - B).mean()
+            print(f"{a:>8} vs {b:<8}: {win*100:5.1f}% wins (avg margin {margin:.4f})")
 
-print(summary("PPO", ppo_returns))
-print(summary("Random", random_returns))
-
-diff = ppo_returns - random_returns
-win_rate = (diff > 0).mean()
-print(f"Head-to-head: PPO beats Random on {win_rate*100:.1f}% of episodes "
-      f"(avg margin {diff.mean():.4f} per episode).")
-
-
-for i in range(min(5, N_EPISODES)):
-    print(f"Episode {i} start={starts[i]} | PPO={ppo_returns[i]:.4f} | Random={random_returns[i]:.4f}")
-
+# ------------- Sample lines -------------
+print("\n=== First few episodes ===")
+K = min(5, N_EPISODES)
+for i in range(K):
+    line = [f"start={starts[i]:5d}"]
+    for name in sorted(returns.keys()):
+        line.append(f"{name}={returns[name][i]:.4f}")
+    print(" | ".join(line))

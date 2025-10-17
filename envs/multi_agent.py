@@ -1,8 +1,13 @@
 import numpy as np
 from gymnasium import spaces
-from pettingzoo.parallel import ParallelEnv
+from pettingzoo.utils.env import ParallelEnv
 
 class BatteryParallelEnv(ParallelEnv):
+    metadata = {
+        "name": "battery_parallel_v0",
+        "render_modes": [],     
+    }
+
     def __init__(self,
                 n_agents=5,
                 episode_length=24,
@@ -16,8 +21,11 @@ class BatteryParallelEnv(ParallelEnv):
                 discharge_efficiency=0.95,
                 continuous_action=True,
                 price_series=None,
-                seed=None):
+                seed=None,
+                render_mode=None):
         super().__init__()
+
+        self.render_mode = render_mode  
 
         if not isinstance(n_agents, int) or n_agents <= 0:
             raise ValueError("n_agents must be a positive integer")
