@@ -1,0 +1,6 @@
+numpy
+pandas
+gymnasium
+stable_baselines3
+supersuit
+pettingzoo
