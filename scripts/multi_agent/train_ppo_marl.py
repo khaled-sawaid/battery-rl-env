@@ -54,7 +54,7 @@ vec_env = concat_vec_envs_v1(vec_env, NUM_PARALLEL_ENVS, num_cpus=1, base_class=
 # Monitoring wrapper
 vec_env = VecMonitor(vec_env)
 
-# Seed Python/numpy/torch/etc. (SB3 helper)
+
 set_random_seed(SEED)
 
 # =====================================================

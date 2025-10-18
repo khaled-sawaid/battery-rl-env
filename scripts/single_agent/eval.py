@@ -23,9 +23,9 @@ env = Monitor(base_env)
 # ------------- Load models if available -------------
 models = {}
 paths = {
-    "PPO": "ppo_battery_env",
-    "TD3": "td3_battery_env",
-    "SAC": "sac_battery_env",
+    "PPO": "trained_agents/ppo_battery_env",
+    "TD3": "trained_agents/td3_battery_env",
+    "SAC": "trained_agents/sac_battery_env",
 }
 loaders = {"PPO": PPO, "TD3": TD3, "SAC": SAC}
 
