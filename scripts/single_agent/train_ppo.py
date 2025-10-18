@@ -29,4 +29,4 @@ model = PPO(
 )
 
 model.learn(total_timesteps=200_000)
-model.save("ppo_battery_env")
+model.save("trained_agents/ppo_battery_env")
