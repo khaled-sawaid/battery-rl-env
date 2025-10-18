@@ -28,5 +28,5 @@ model = PPO(
     gamma=0.99,
 )
 
-model.learn(total_timesteps=200_000)
+model.learn(total_timesteps=500_000)
 model.save("trained_agents/ppo_battery_env")

@@ -1,4 +1,4 @@
-# scripts/multi_agent/train_ppo_marl.py
+
 import pandas as pd
 import numpy as np
 
@@ -10,17 +10,13 @@ from supersuit import pettingzoo_env_to_vec_env_v1, concat_vec_envs_v1
 
 from envs.multi_agent import BatteryParallelEnv
 
-# =====================================================
-#                 DATA LOADING
-# =====================================================
+
 COL = "Day-ahead Price (EUR/MWh)"
 data = pd.read_csv("datasets/energy_prices_2024_france.csv", usecols=[COL])
 prices_mwh = pd.to_numeric(data[COL], errors="coerce").dropna()
 prices_kwh = (prices_mwh / 1000.0).to_numpy(dtype=np.float32)
 
-# =====================================================
-#                 TRAINING SETTINGS
-# =====================================================
+
 SEED = 42
 n_agents = 5
 episode_length = 24
@@ -31,11 +27,9 @@ LEARNING_RATE = 3e-4
 N_STEPS = 2048
 BATCH_SIZE = 64
 GAMMA = 0.99
-TOTAL_TIMESTEPS = 200_000
+TOTAL_TIMESTEPS = 500_000
 
-# =====================================================
-#                 ENVIRONMENT SETUP
-# =====================================================
+
 par_env = BatteryParallelEnv(
     n_agents=n_agents,
     episode_length=episode_length,
@@ -57,9 +51,7 @@ vec_env = VecMonitor(vec_env)
 
 set_random_seed(SEED)
 
-# =====================================================
-#                 PPO TRAINING
-# =====================================================
+
 model = PPO(
     policy="MlpPolicy",
     env=vec_env,
@@ -71,9 +63,9 @@ model = PPO(
     # IMPORTANT: do NOT pass seed here; ConcatVecEnv has no .seed()
 )
 
-print("\n🚀 Starting training...")
+print("\n Starting training...")
 model.learn(total_timesteps=TOTAL_TIMESTEPS)
 model.save("ppo_battery_parallel_shared_policy")
 
 vec_env.close()
-print("\n✅ Training finished. Model saved as 'ppo_battery_parallel_shared_policy.zip'")
+print("\n Training finished. Model saved as 'ppo_battery_parallel_shared_policy.zip'")
