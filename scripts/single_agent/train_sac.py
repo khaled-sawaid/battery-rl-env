@@ -41,5 +41,5 @@ model = SAC(
     seed=SEED,
 )
 
-model.learn(total_timesteps=500_000)
+model.learn(total_timesteps=200_000)
 model.save("sac_battery_env")
